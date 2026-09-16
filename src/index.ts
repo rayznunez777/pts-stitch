@@ -34,7 +34,8 @@ export default {
       return new Response(null, { status: 204, headers: cors() });
     }
 
-    if (url.pathname === "/health" || url.pathname === "/digitize") {
+    // everything the service exposes, forwarded straight through
+    if (["/health", "/selftest", "/digitize"].includes(url.pathname)) {
       const container = env.STITCH.getByName("main");
       const response = await container.fetch(request);
       const headers = new Headers(response.headers);
@@ -42,10 +43,13 @@ export default {
       return new Response(response.body, { status: response.status, headers });
     }
 
-    return new Response("PTS stitch service. POST /digitize, GET /health.", {
-      status: 404,
-      headers: cors()
-    });
+    return new Response(
+      "PTS stitch service.\n\n" +
+      "  GET  /health    is the web service answering\n" +
+      "  GET  /selftest  runs a satin column through the engine\n" +
+      "  POST /digitize  digitizes an SVG\n",
+      { status: 404, headers: { ...cors(), "Content-Type": "text/plain" } }
+    );
   }
 };
 
