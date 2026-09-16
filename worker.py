@@ -24,6 +24,19 @@ os.chdir(os.environ.get("INKSTITCH_DIR", "/opt/inkstitch"))
 from lib import extensions  # noqa: E402
 
 
+import io
+import traceback as _tb
+
+
+def _capture_stderr():
+    """Extensions report their problems on stderr and then exit quietly, which
+       leaves an empty output file and no explanation."""
+    buf = io.StringIO()
+    saved = sys.stderr
+    sys.stderr = buf
+    return buf, saved
+
+
 def run_fill_to_satin(svg_path, ids, out_path):
     """Hand Ink/Stitch the filled shapes and their rungs and let it work out
        the rails. This is the geometry we deliberately do not do ourselves."""
@@ -43,6 +56,8 @@ def run_fill_to_satin(svg_path, ids, out_path):
         except SystemExit as exc:
             if exc.code not in (0, None):
                 raise RuntimeError("fill_to_satin exited with %s" % exc.code)
+        except Exception as exc:                               # noqa: BLE001
+            raise RuntimeError("fill_to_satin: %s" % exc)
     finally:
         sys.stdout.flush()
         os.dup2(saved, 1)
@@ -66,6 +81,8 @@ def run_job(svg_path, fmt, out_path):
         except SystemExit as exc:
             if exc.code not in (0, None):
                 raise RuntimeError("engine exited with %s" % exc.code)
+        except Exception as exc:                               # noqa: BLE001
+            raise RuntimeError("stitch generation: %s" % exc)
     finally:
         sys.stdout.flush()
         os.dup2(saved, 1)
@@ -92,12 +109,22 @@ def main():
                 _, svg_path, fmt, out_path = parts
                 run_job(svg_path, fmt, out_path)
             if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-                raise RuntimeError("engine produced no output")
+                raise RuntimeError(
+                    "the %s step produced an empty file. input %s (%d bytes), "
+                    "selection %d items" % (
+                        "rail" if kind == "f2s" else "stitch",
+                        os.path.basename(svg_path),
+                        os.path.getsize(svg_path) if os.path.exists(svg_path) else -1,
+                        len(parts[2].split(",")) if kind == "f2s" else 0))
             sys.stdout.write("OK\t%s\n" % out_path)
         except Exception as exc:                               # noqa: BLE001
+            detail = traceback.format_exc()
+            # the last real line of the traceback says far more than the type
+            tail = [ln.strip() for ln in detail.strip().splitlines() if ln.strip()]
             msg = "%s: %s" % (type(exc).__name__, exc)
-            print(traceback.format_exc()[-2000:], file=sys.stderr)
-            sys.stdout.write("ERR\t%s\n" % msg.replace("\n", " ")[:900])
+            if len(tail) > 1:
+                msg += " || " + " <- ".join(tail[-3:])
+            sys.stdout.write("ERR\t%s\n" % msg.replace("\t", " ").replace("\n", " ")[:900])
         sys.stdout.flush()
 
 
