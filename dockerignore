@@ -1,8 +1,0 @@
-node_modules
-.wrangler
-.git
-*.log
-.DS_Store
-README.md
-SETUP-CLOUDFLARE.md
-SETUP-GITHUB.md
