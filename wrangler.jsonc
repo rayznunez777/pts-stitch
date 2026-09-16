@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pts-stitch",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+
+  // The container holds Ink/Stitch. It builds from the Dockerfile beside this
+  // file when you run `wrangler deploy`.
+  "containers": [
+    {
+      "class_name": "StitchContainer",
+      "image": "./Dockerfile",
+      "max_instances": 2,
+      "instance_type": "standard-1"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "STITCH", "class_name": "StitchContainer" }
+    ]
+  },
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["StitchContainer"] }
+  ],
+
+  "observability": { "enabled": true }
+}
