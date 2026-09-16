@@ -378,6 +378,7 @@ def convert_satins_in_place(svg_bytes, objects):
     shapes = [o["id"] for o in objects if o.get("role") == "satin" and owners.get(o["id"])]
 
     made = 0
+    skipped = []
     marker = "{%s}pts_done" % NS
     for shape_id in shapes:
         root = etree.fromstring(svg_bytes)
@@ -393,7 +394,19 @@ def convert_satins_in_place(svg_bytes, objects):
         if position is None:
             continue
 
-        svg_bytes = run_fill_to_satin(svg_bytes, [shape_id] + owners[shape_id])
+        try:
+            converted = run_fill_to_satin(svg_bytes, [shape_id] + owners[shape_id])
+        except Exception as exc:                                # noqa: BLE001
+            # One shape the converter dislikes must not take the design with
+            # it. Leave this one as a fill and carry on: a design with one
+            # region filled instead of satined is a far better answer than no
+            # design at all.
+            skipped.append("%s (%s)" % (shape_id, str(exc)[:120]))
+            continue
+        if not converted:
+            skipped.append("%s (converter returned nothing)" % shape_id)
+            continue
+        svg_bytes = converted
 
         root = etree.fromstring(svg_bytes)
         layer = find_layer(root)
@@ -429,7 +442,7 @@ def convert_satins_in_place(svg_bytes, objects):
         made += len(fresh)
         svg_bytes = etree.tostring(root, xml_declaration=True, encoding="utf-8")
 
-    return svg_bytes, made
+    return svg_bytes, made, skipped
 
 
 def style_value(style, key):
@@ -719,11 +732,12 @@ def digitize():
         satin_ids = [o["id"] for o in (body.get("objects") or [])
                      if o.get("role") in ("satin", "rung")]
         satins = 0
+        skipped = []
         dbg = os.environ.get("DEBUG_DIR")
         if dbg:
             Path(dbg, "1-prepared.svg").write_bytes(prepared)
         if satin_ids:
-            prepared, made = convert_satins_in_place(prepared, body.get("objects") or [])
+            prepared, made, skipped = convert_satins_in_place(prepared, body.get("objects") or [])
             if dbg:
                 Path(dbg, "2-after-fill-to-satin.svg").write_bytes(prepared)
             prepared, satins = apply_satin_params(prepared, body.get("params") or {},
@@ -747,6 +761,7 @@ def digitize():
         "stats": statistics(stitches),
         "elements": count,
         "satinColumns": satins,
+        "filledInstead": skipped,
         "ms": int((time.time() - started) * 1000),
         "files": {k: base64.b64encode(v).decode("ascii") for k, v in files.items()},
     })
