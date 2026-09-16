@@ -225,7 +225,7 @@ def prepare_svg(svg_text, params, objects):
             # left as a fill here: the first pass converts it, and its settings
             # are applied afterwards once the satin column exists
             continue
-        if role == "rung":
+        if role in ("rung", "satinpath"):
             continue
         if role == "run":
             attrs["stroke_method"] = "running_stitch"
@@ -362,6 +362,55 @@ def overlap_area(a, b):
     w = min(a[2], b[2]) - max(a[0], b[0])
     h = min(a[3], b[3]) - max(a[1], b[1])
     return w * h if w > 0 and h > 0 else 0.0
+
+
+def run_stroke_to_satin(svg_bytes, ids):
+    """Centre lines in, satin columns out."""
+    tmp = tempfile.mkdtemp()
+    src = Path(tmp) / "in.svg"
+    dst = Path(tmp) / "out.svg"
+    src.write_bytes(svg_bytes)
+    with _worker_lock:
+        proc = worker_process()
+        proc.stdin.write("s2s\t%s\t%s\t%s\n" % (src, ",".join(ids), dst))
+        proc.stdin.flush()
+        reply = read_line(proc.stdout, JOB_TIMEOUT, "the satin columns")
+    if reply.startswith("ERR"):
+        raise RuntimeError(reply.split("\t", 1)[-1])
+    data = dst.read_bytes()
+    if not data:
+        raise RuntimeError("stroke_to_satin produced nothing")
+    return data
+
+
+def convert_centrelines(svg_bytes, objects):
+    """Convert every centre line marked as satin, one at a time so a shape the
+       converter dislikes cannot take the rest of the design with it."""
+    lines = [o["id"] for o in objects if o.get("role") == "satinpath"]
+    made, skipped = 0, []
+    marker = "{%s}pts_done" % NS
+    for line_id in lines:
+        try:
+            converted = run_stroke_to_satin(svg_bytes, [line_id])
+        except Exception as exc:                                # noqa: BLE001
+            skipped.append("%s (%s)" % (line_id, str(exc)[:120]))
+            continue
+        if not converted:
+            skipped.append("%s (converter returned nothing)" % line_id)
+            continue
+        root = etree.fromstring(converted)
+        fresh = [n for n in root.iter()
+                 if isinstance(n.tag, str)
+                 and etree.QName(n).localname == "path"
+                 and n.get("{%s}satin_column" % NS) and not n.get(marker)]
+        if not fresh:
+            skipped.append("%s (no column produced)" % line_id)
+            continue
+        for node in fresh:
+            node.set(marker, "1")
+        made += len(fresh)
+        svg_bytes = etree.tostring(root, xml_declaration=True, encoding="utf-8")
+    return svg_bytes, made, skipped
 
 
 def convert_satins_in_place(svg_bytes, objects):
@@ -736,7 +785,14 @@ def digitize():
         dbg = os.environ.get("DEBUG_DIR")
         if dbg:
             Path(dbg, "1-prepared.svg").write_bytes(prepared)
-        if satin_ids:
+        line_ids = [o["id"] for o in (body.get("objects") or []) if o.get("role") == "satinpath"]
+        if line_ids:
+            prepared, satins, skipped = convert_centrelines(prepared, body.get("objects") or [])
+            if dbg:
+                Path(dbg, "2-after-line-to-satin.svg").write_bytes(prepared)
+            prepared, _n = apply_satin_params(prepared, body.get("params") or {},
+                                              body.get("objects") or [])
+        elif satin_ids:
             prepared, made, skipped = convert_satins_in_place(prepared, body.get("objects") or [])
             if dbg:
                 Path(dbg, "2-after-fill-to-satin.svg").write_bytes(prepared)

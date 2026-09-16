@@ -66,6 +66,33 @@ def run_fill_to_satin(svg_path, ids, out_path):
         sys.argv = argv
 
 
+def run_stroke_to_satin(svg_path, ids, out_path):
+    """Turn stroked centre lines into satin columns. Ink/Stitch builds the
+       rails from the line and its stroke width, which is the whole point: the
+       path says where the stitches run, and the width says how far."""
+    saved = os.dup(1)
+    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    argv = sys.argv[:]
+    args = ["--id=%s" % i for i in ids] + [str(svg_path)]
+    try:
+        os.dup2(fd, 1)
+        sys.argv = [sys.argv[0]] + args
+        extension = extensions.StrokeToSatin()
+        try:
+            extension.run(args=args)
+        except SystemExit as exc:
+            if exc.code not in (0, None):
+                raise RuntimeError("stroke_to_satin exited with %s" % exc.code)
+        except Exception as exc:                               # noqa: BLE001
+            raise RuntimeError("stroke_to_satin: %s" % exc)
+    finally:
+        sys.stdout.flush()
+        os.dup2(saved, 1)
+        os.close(saved)
+        os.close(fd)
+        sys.argv = argv
+
+
 def run_job(svg_path, fmt, out_path):
     """Run the output extension with stdout redirected into a file, which is
        where Ink/Stitch expects to write the embroidery data."""
@@ -105,6 +132,9 @@ def main():
             if kind == "f2s":
                 _, svg_path, ids, out_path = parts
                 run_fill_to_satin(svg_path, [i for i in ids.split(",") if i], out_path)
+            elif kind == "s2s":
+                _, svg_path, ids, out_path = parts
+                run_stroke_to_satin(svg_path, [i for i in ids.split(",") if i], out_path)
             else:
                 _, svg_path, fmt, out_path = parts
                 run_job(svg_path, fmt, out_path)
@@ -112,10 +142,10 @@ def main():
                 raise RuntimeError(
                     "the %s step produced an empty file. input %s (%d bytes), "
                     "selection %d items" % (
-                        "rail" if kind == "f2s" else "stitch",
+                        {"f2s": "rail", "s2s": "line to satin"}.get(kind, "stitch"),
                         os.path.basename(svg_path),
                         os.path.getsize(svg_path) if os.path.exists(svg_path) else -1,
-                        len(parts[2].split(",")) if kind == "f2s" else 0))
+                        len(parts[2].split(",")) if kind in ("f2s", "s2s") else 0))
             sys.stdout.write("OK\t%s\n" % out_path)
         except Exception as exc:                               # noqa: BLE001
             detail = traceback.format_exc()
